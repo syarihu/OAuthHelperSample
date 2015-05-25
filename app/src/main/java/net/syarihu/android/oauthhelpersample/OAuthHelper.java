@@ -161,7 +161,7 @@ public class OAuthHelper {
         return pref.getString(key, null);
     }
 
-    interface OnAuthListener {
+    public interface OnAuthListener {
         /**
          * AuthToken取得時
          */
