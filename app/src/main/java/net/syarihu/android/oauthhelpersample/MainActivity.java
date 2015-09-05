@@ -11,21 +11,20 @@ import android.view.MenuItem;
 
 import com.google.api.services.urlshortener.UrlshortenerScopes;
 
-import org.apache.http.HttpResponse;
-import org.apache.http.client.ResponseHandler;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.entity.StringEntity;
-import org.apache.http.impl.client.DefaultHttpClient;
-import org.apache.http.util.EntityUtils;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 public class MainActivity extends ActionBarActivity implements OAuthHelper.OnAuthListener {
     private static final String TAG = MainActivity.class.getSimpleName();
     OAuthHelper mHelper;
-    private boolean mInvalidated = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -70,7 +69,6 @@ public class MainActivity extends ActionBarActivity implements OAuthHelper.OnAut
         /*
         * TODO ここにAPIリクエストを書く
         * TODO ここでは例として、Google Url ShortenerでURLを短縮している
-        * TODO ここでstartAuthすると無限ループするので、AuthTokenの再取得処理を入れる際は注意して実装する
         */
         new AsyncTask<Void, Void, Boolean>() {
             boolean mResult;
@@ -78,50 +76,57 @@ public class MainActivity extends ActionBarActivity implements OAuthHelper.OnAut
             @Override
             protected Boolean doInBackground(Void... voids) {
                 mResult = true;
-                Uri.Builder builder = new Uri.Builder();
-                builder.path("https://www.googleapis.com/urlshortener/v1/url");
-                // AccountManagerで取得したAuthTokenをaccess_tokenパラメータにセットする
-                builder.appendQueryParameter("access_token", authToken);
-                String postUrl = Uri.decode(builder.build().toString());
-                DefaultHttpClient client = new DefaultHttpClient();
-                HttpPost post = new HttpPost(postUrl);
-                post.setHeader("Content-type", "application/json");
                 try {
+                    // POST URLの生成
+                    Uri.Builder builder = new Uri.Builder();
+                    builder.path("https://www.googleapis.com/urlshortener/v1/url");
+                    // AccountManagerで取得したAuthTokenをaccess_tokenパラメータにセットする
+                    builder.appendQueryParameter("access_token", authToken);
+                    String postUrl = Uri.decode(builder.build().toString());
+
                     JSONObject jsonRequest = new JSONObject();
-                    jsonRequest.put("longUrl", "http://www.google.com/");
-                    StringEntity stringEntity = new StringEntity(jsonRequest.toString());
-                    post.setEntity(stringEntity);
-                    client.execute(post, new ResponseHandler<String>() {
-                        @Override
-                        public String handleResponse(HttpResponse response) throws IOException {
-                            String res_entity = EntityUtils.toString(response.getEntity(), "UTF-8");
-                            Log.v(TAG, res_entity);
-                            try {
-                                JSONObject json = new JSONObject(res_entity);
-                                mResult = !json.has("error");
-                            } catch (JSONException e) {
-                                e.printStackTrace();
-                            }
-                            return null;
-                        }
-                    });
+                    jsonRequest.put("longUrl", "http://www.google.co.jp/");
+                    URL url = new URL(postUrl);
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setRequestProperty("Content-Type", "application/json");
+                    conn.setDoInput(true);
+                    conn.setDoOutput(true);
+                    PrintStream ps = new PrintStream(conn.getOutputStream());
+                    ps.print(jsonRequest.toString());
+                    ps.close();
+
+                    // POSTした結果を取得
+                    InputStream is = conn.getInputStream();
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+                    String s;
+                    String postResponse = "";
+                    while ((s = reader.readLine()) != null) {
+                        postResponse += s + "\n";
+                    }
+                    reader.close();
+                    Log.v(TAG, postResponse);
+
+                    JSONObject shortenInfo = new JSONObject(postResponse);
+                    // エラー判定
+                    if(shortenInfo.has("error")) {
+                        Log.e(TAG, postResponse);
+                        mResult = false;
+                    }
                 } catch (IOException | JSONException e) {
                     e.printStackTrace();
                     mResult = false;
                 }
+                Log.v(TAG, "shorten finished.");
 
                 return mResult;
             }
 
             @Override
             protected void onPostExecute(Boolean result) {
-                if(!result) {
-                    // 失敗時の処理
-                    if(!mInvalidated) {
-                        mHelper.startAuth(true);
-                        mInvalidated = true;
-                    }
-                }
+                if(result) return;
+                Log.v(TAG, "再認証");
+                mHelper.startAuth(true);
             }
         }.execute();
     }

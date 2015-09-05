@@ -28,7 +28,8 @@ public class OAuthHelper {
     private static final String KEY_ACCOUNT_NAME = "account_name";
     private static final String KEY_ACCOUNT_TYPE = "account_type";
 
-    private final Activity mActivity;
+    private Activity mActivity;
+    AccountManager mAccountManager;
     private String mAccountName;
     private String mAccountType;
     private String mAuthToken;
@@ -40,6 +41,7 @@ public class OAuthHelper {
         mActivity = activity;
         mScopes = scopes;
         mOnAuthListener = listener;
+        mAccountManager = AccountManager.get(activity);
     }
 
     /**
@@ -52,24 +54,25 @@ public class OAuthHelper {
         if (getPreference(KEY_ACCOUNT_NAME) == null) {
             // アカウント選択画面を表示する
             selectAccount();
-        } else {
-            mAccountName = getPreference(KEY_ACCOUNT_NAME);
-            mAccountType = getPreference(KEY_ACCOUNT_TYPE);
-            mInvalidate = invalidate;
-            // 認証を開始
-            auth();
+            return;
         }
+
+        mAccountName = getPreference(KEY_ACCOUNT_NAME);
+        mAccountType = getPreference(KEY_ACCOUNT_TYPE);
+        mInvalidate = invalidate;
+        // 認証を開始
+        auth();
     }
 
     /**
      * アカウント選択画面を表示
      */
     private void selectAccount() {
-        if (mAccountName != null) {
+        if (mAccountName != null || mActivity == null) {
             return;
         }
 
-        Intent intent = AccountManager.get(mActivity).newChooseAccountIntent(
+        Intent intent = AccountManager.newChooseAccountIntent(
                 null, null, new String[]{
                         "com.google"
                 },
@@ -111,18 +114,12 @@ public class OAuthHelper {
      * 認証許可やAuthTokenの取得など
      */
     private void auth() {
-        AccountManager manager = AccountManager.get(mActivity);
-        // invalidateがtrueならAuthTokenを再取得する
-        if (mInvalidate && mAuthToken != null) {
-            manager.invalidateAuthToken(mAccountType, mAuthToken);
-            Log.v(TAG, "invalidated");
-        }
-        manager.getAuthToken(new Account(mAccountName, mAccountType),
+        mAccountManager.getAuthToken(new Account(mAccountName, mAccountType),
                 mScopes,
                 null, false, new AccountManagerCallback<Bundle>() {
                     @Override
                     public void run(AccountManagerFuture<Bundle> future) {
-                        Bundle bundle = null;
+                        Bundle bundle;
                         try {
                             bundle = future.getResult();
                             Intent intent = (Intent) bundle.get(AccountManager.KEY_INTENT);
@@ -134,8 +131,17 @@ public class OAuthHelper {
                             }
                             // 既に認証されている場合はAuthTokenをそのまま取得
                             mAuthToken = bundle.getString(AccountManager.KEY_AUTHTOKEN);
-                            // AuthToken取得時の処理を実行
-                            mOnAuthListener.getAuthToken(mAuthToken);
+                            // invalidateがtrueならAuthTokenを再取得する
+                            if (mInvalidate && mAuthToken != null) {
+                                mAccountManager.invalidateAuthToken(mAccountType, mAuthToken);
+                                // 再認証
+                                auth();
+                                Log.v(TAG, "invalidated");
+                                mInvalidate = false;
+                            } else {
+                                // AuthToken取得時の処理を実行
+                                mOnAuthListener.getAuthToken(mAuthToken);
+                            }
                         } catch (OperationCanceledException | IOException | AuthenticatorException e) {
                             e.printStackTrace();
                         }
